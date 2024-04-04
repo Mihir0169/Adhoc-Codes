@@ -1,0 +1,77 @@
+-- To get pip opt and successful
+select 
+date_trunc('year',pss.created_at) as purchase_year,
+count(distinct subscription_payment_id) as no_of_pip,
+count(distinct case when succ_payments=no_of_parts then subscription_payment_id else null end) as succ_pip
+from 
+(
+select 
+pss.subscription_payment_id,
+count(distinct case when pss.index =1 and pp.state in (2,3) then payment_id else null end ) as first_part_payment,
+count(distinct case when pp.state =2 then payment_id else null end) as succ_payments,
+max(pss.index) as no_of_parts
+from plus_subscriptions_subscriptionpartpayment pss
+left join payments_payment pp on pss.payment_id = pp.id 
+where pss.partial_type =1 
+group by
+1
+) as c
+left join plus_subscriptions_subscriptionpayment pss on pss.id = c.subscription_payment_id
+left join payments_payment pp2 on pp2.id = pss.payment_id
+where pss.created_at<='2024-01-15' --and pp2.state = 2
+and c.first_part_payment >0
+group by 
+1
+;
+
+-- To get pip cancelled and purchase afterwards
+with pip_canceled_users as
+(
+select 
+c.subscription_payment_id ,
+c.user_id,
+(pss.created_at + interval '330 mins') as payment_date_time
+from 
+(
+select 
+pss.subscription_payment_id,
+pss.user_id,
+count(distinct case when pss.index =1 and pp.state in (2,3) then payment_id else null end ) as first_part_payment,
+count(distinct case when pp.state =2 then payment_id else null end) as succ_payments,
+max(pss.index) as no_of_parts
+from plus_subscriptions_subscriptionpartpayment pss
+left join payments_payment pp on pss.payment_id = pp.id 
+where pss.partial_type =1 
+group by
+1,2
+) as c
+left join plus_subscriptions_subscriptionpayment pss on pss.id = c.subscription_payment_id
+left join payments_payment pp2 on pp2.id = pss.payment_id
+where pss.created_at<='2024-01-15' 
+--and pp2.state = 2
+and c.first_part_payment > 0
+and succ_payments!= no_of_parts
+--group by 
+--1,
+--2
+)
+select 
+date_trunc('year',pcs.payment_date_time) as purchase_year,
+count(distinct pcs.user_id) as canceled_pip_users,
+count(distinct case when trb.purchase_date is not null 
+		and trb.purchase_date_time < pcs.payment_date_time + interval '3 days' then pcs.user_id end) as no_of_purchase_3D,
+count(distinct case when trb.purchase_date is not null 
+		and trb.purchase_date_time < pcs.payment_date_time + interval '5 days' then pcs.user_id end) as no_of_purchase_5D,
+count(distinct case when trb.purchase_date is not null 
+		and trb.purchase_date_time < pcs.payment_date_time + interval '7 days' then pcs.user_id end) as no_of_purchase_7D,
+count(distinct case when trb.purchase_date is not null 
+		and trb.purchase_date_time < pcs.payment_date_time + interval '15 days' then pcs.user_id end) as no_of_purchase_15D,
+		count(distinct case when trb.purchase_date is not null 
+		and trb.purchase_date_time < pcs.payment_date_time + interval '30 days' then pcs.user_id end) as no_of_purchase_30D,
+count(distinct case when trb.purchase_date is not null then pcs.user_id end) as no_of_purchase
+from pip_canceled_users pcs 
+left join truth.tbl_revenue_base trb
+	on pcs.user_id = trb.learner_id 
+	and pcs.payment_date_time < trb.purchase_date_time 
+	and sub_type in ('Plus','Iconic')
+group by 1
