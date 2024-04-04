@@ -1,0 +1,129 @@
+WITH DoubtCounts AS (
+    SELECT
+        solution_id,
+        solution_date,
+        COUNT(DISTINCT CASE WHEN datediff('day', doubt_date, current_date) <= 90 THEN doubt_id END) AS frequency_in_90_days,
+        COUNT(DISTINCT CASE WHEN datediff('day', doubt_date, current_date) <= 365 THEN doubt_id END) AS frequency_in_365_days,
+        COUNT(DISTINCT CASE WHEN datediff('day', doubt_date, current_date) <= 90 AND solution_type = 1 THEN doubt_id END) AS frequency_in_90_days_instant,
+        COUNT(DISTINCT CASE WHEN datediff('day', doubt_date, current_date) <= 365 AND solution_type = 1 THEN doubt_id END) AS frequency_in_365_days_instant
+    FROM (
+        SELECT 
+            s.id as solution_id,
+            d.id as doubt_id,
+            dsm.type as solution_type,
+            '1970-01-01 00:00:00'::timestamp without time zone + (s.created_at / 1000)::double precision * '00:00:01'::interval as solution_date,
+            '1970-01-01 00:00:00'::timestamp without time zone + (d.created_at / 1000)::double precision * '00:00:01'::interval as doubt_date,
+            dtm.topology_id as topology_id,
+            dtm.topology_name as topology_name,
+            dtm1.topology_id as topic_id,
+            dtm1.topology_name as topic_name
+        FROM doubts.doubts d 
+        LEFT JOIN doubts.doubt_solution_map dsm ON d.id = dsm.doubt_id 
+        LEFT JOIN doubts.solutions s ON s.id = dsm.solution_id 
+        LEFT JOIN doubts.attachments a ON a.entity_id = s.id
+        LEFT JOIN (
+            SELECT doubt_topology_map.id, doubt_topology_map.created_at, doubt_topology_map.updated_at, doubt_topology_map.deleted_at, doubt_topology_map.doubt_id, doubt_topology_map.topology_id, tt.name as topology_name, doubt_topology_map.topology_level, doubt_topology_map.updated_by
+            FROM doubts.doubt_topology_map
+            LEFT JOIN topology_topology tt ON doubt_topology_map.topology_id = tt.id
+            WHERE doubt_topology_map.topology_level = 10
+        ) dtm ON d.id = dtm.doubt_id
+        LEFT JOIN (
+            SELECT t_1.doubt_id, t_1.topology_id, tt.name as topology_name
+            FROM doubts.doubt_topology_map t_1
+            LEFT JOIN topology_topology tt ON t_1.topology_id = tt.id
+            WHERE t_1.created_at = (
+                SELECT MAX(t_2.created_at) AS max
+                FROM doubts.doubt_topology_map t_2
+                WHERE t_1.doubt_id = t_2.doubt_id AND t_2.topology_level = 30
+            ) AND t_1.topology_level = 30
+        ) dtm1 ON d.id = dtm1.doubt_id
+        WHERE a.content IS NOT NULL
+    ) subquery
+    GROUP BY solution_id, solution_date
+)
+SELECT
+    dc.solution_id,
+    dc.solution_date,
+    LISTAGG(distinct topology_id, ',') WITHIN GROUP (ORDER BY dc.solution_id, dc.solution_date) AS topology_id,
+    LISTAGG(distinct topology_name, ',') WITHIN GROUP (ORDER BY dc.solution_id, dc.solution_date) AS topology_name,
+    LISTAGG(distinct topic_id, ',') WITHIN GROUP (ORDER BY dc.solution_id, dc.solution_date) AS topic_id,
+    LISTAGG(distinct topic_name, ',') WITHIN GROUP (ORDER BY dc.solution_id, dc.solution_date) AS topic_name,
+    MAX(doubt_date) AS latest_doubt_date,
+    MAX(last_watch_timestamp) as last_watch_timestamp,
+    MAX(dc.frequency_in_90_days) AS frequency_in_90_days,
+    MAX(dc.frequency_in_365_days) AS frequency_in_365_days,
+    MAX(dc.frequency_in_90_days_instant) AS frequency_in_90_days_instant,
+    MAX(dc.frequency_in_365_days_instant) AS frequency_in_365_days_instant,
+    max(case when last_watch.viewing_frequency_in_90_days is not null then last_watch.viewing_frequency_in_90_days else 0 end) as viewing_frequency_in_90_days,
+	max(case when last_watch.viewing_frequency_in_365_days is not null then last_watch.viewing_frequency_in_365_days else 0 end) as viewing_frequency_in_365_days,
+	max(case when last_watch.viewing_frequency_in_730_days is not null then last_watch.viewing_frequency_in_730_days else 0 end) as viewing_frequency_in_730_days
+FROM DoubtCounts dc
+JOIN (
+    SELECT 
+        s.id as solution_id,
+        d.id as doubt_id,
+        dsm.type as solution_type,
+        '1970-01-01 00:00:00'::timestamp without time zone + (s.created_at / 1000)::double precision * '00:00:01'::interval as solution_date,
+        '1970-01-01 00:00:00'::timestamp without time zone + (d.created_at / 1000)::double precision * '00:00:01'::interval as doubt_date,
+        dtm.topology_id as topology_id,
+        dtm.topology_name as topology_name,
+        dtm1.topology_id as topic_id,
+        dtm1.topology_name as topic_name
+    FROM doubts.doubts d 
+    LEFT JOIN doubts.doubt_solution_map dsm ON d.id = dsm.doubt_id 
+    LEFT JOIN doubts.solutions s ON s.id = dsm.solution_id 
+    LEFT JOIN doubts.attachments a ON a.entity_id = s.id
+    LEFT JOIN (
+        SELECT doubt_topology_map.id, doubt_topology_map.created_at, doubt_topology_map.updated_at, doubt_topology_map.deleted_at, doubt_topology_map.doubt_id, doubt_topology_map.topology_id, tt.name as topology_name, doubt_topology_map.topology_level, doubt_topology_map.updated_by
+        FROM doubts.doubt_topology_map
+        LEFT JOIN topology_topology tt ON doubt_topology_map.topology_id = tt.id
+        WHERE doubt_topology_map.topology_level = 10
+    ) dtm ON d.id = dtm.doubt_id
+    LEFT JOIN (
+        SELECT t_1.doubt_id, t_1.topology_id, tt.name as topology_name
+        FROM doubts.doubt_topology_map t_1
+        LEFT JOIN topology_topology tt ON t_1.topology_id = tt.id
+        WHERE t_1.created_at = (
+            SELECT MAX(t_2.created_at) AS max
+            FROM doubts.doubt_topology_map t_2
+            WHERE t_1.doubt_id = t_2.doubt_id AND t_2.topology_level = 30
+        ) AND t_1.topology_level = 30
+    ) dtm1 ON d.id = dtm1.doubt_id
+    WHERE a.content IS NOT NULL
+) mainQuery ON dc.solution_id = mainQuery.solution_id AND dc.solution_date = mainQuery.solution_date
+left join 
+(	select 
+	dsm.solution_id as solution_id ,
+	max(prod.updated_at + interval '330 mins') as last_watch_timestamp,
+	count( CASE WHEN datediff('day', prod.updated_at + interval '330 mins', current_date) <= 90 THEN s.id 
+		when prod.updated_at + interval '330 mins' is null then 0 END) as viewing_frequency_in_90_days,
+    count( CASE WHEN datediff('day', prod.updated_at + interval '330 mins', current_date) <= 365 THEN s.id 
+    	when prod.updated_at + interval '330 mins' is null then 0	END) as viewing_frequency_in_365_days,
+    count( CASE WHEN datediff('day', prod.updated_at + interval '330 mins', current_date) <= 730 THEN s.id 
+    	when prod.updated_at + interval '330 mins' is null then 0	END) as viewing_frequency_in_730_days
+	from
+		production_video_analytics as prod
+	left join
+		live_room as doubt_room
+	on
+		prod.video_id = 'DOUBTS_' + doubt_room.uid
+	left join
+		doubts.doubts as doubt
+	on
+		doubt.id = doubt_room.object_id
+	left join 
+		doubts.doubt_solution_map dsm 
+	on
+		dsm.doubt_id = doubt.id 
+	left join 
+		doubts.solutions s 
+	on
+		s.id = dsm.solution_id 
+	where
+		doubt_room.content_type_id = 387
+	and
+		doubt.id is not null
+	group by
+		1) last_watch on last_watch.solution_id =  mainQuery.solution_id
+GROUP BY dc.solution_id, dc.solution_date
+;
