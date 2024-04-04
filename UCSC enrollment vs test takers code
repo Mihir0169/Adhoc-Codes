@@ -1,0 +1,119 @@
+	select 
+	context_campaign_source_tagged,
+--count(distinct learner_uid) as enrolled_users,
+	count(distinct case when base.test_uid = 'FT64NWY56D' then learner_uid end) quiz_attempted_25feb_morning,
+	count(distinct case when base.test_uid = '9SYIOMG4VX' then learner_uid end) quiz_attempted_25feb_evening,
+	count(distinct case when base.test_uid is not null then learner_uid end) as distinct_users
+	from 
+	(
+	select
+	    col.uid as test_series_uid,
+	--    col.name as test_series_name,
+	    test_attempt.test_uid,
+	    test_attempt.test_started_at,
+	--    topo.name as goal_name,
+	    topo.uid as goal_uid,
+	--    bclgm.business_category_name,
+	    ue.user_id as learner_id,
+	    up.uid as learner_uid,
+	  l.lead_id,
+	  l.current_stage,
+	  l.region,
+	    ue.enrolled_at+interval '330 min' as enrolled_at,
+	    au.date_joined+interval '330 min' as date_joined,
+	--    tap.context_campaign_source,
+	    case 
+	    when lower(tap.context_campaign_source) ilike '%email%' then 'Email'
+	    when lower(tap.context_campaign_source) ilike '%whatsapp%' then 'WhatsApp'
+	    when lower(tap.context_campaign_source) ilike '%push%' then 'Push'
+	    when lower(tap.context_campaign_source) ilike '%sms%' then 'SMS'
+	    when lower(tap.context_campaign_source) ilike '%google%' then 'PM'
+	    when lower(tap.context_campaign_source) ilike '%meta%' then 'PM'
+	    when lower(tap.context_campaign_source) ilike '%facebook%' then 'PM'
+	    when lower(tap.context_campaign_source) ilike '%instagram%' then 'PM'
+	    when lower(tap.context_campaign_source) is null then 'Organic'
+	    when lower(tap.context_campaign_source) ilike '%upsc cse - yttglink%' then 'External Links'
+	    else 'Others'
+	    end as context_campaign_source_tagged,
+	--    case when context_campaign_source_tagged like 'Organic' then 'Organic' 
+	--    else tap.context_campaign_name end as context_campaign_name,
+	    tdl.individual_subscription_type,
+	    purchase.purchase_date_time,
+	    purchase.net_amount,
+	    mau.activity_timestamp as mau_date,
+	    mau.mau_type,
+	    row_number() over(partition by up.uid,col.uid order by ue.enrolled_at,tap.received_at ) as rn
+	--    row_number() over(partition by up.uid,col.uid order by ue.enrolled_at,tap.received_at,isnull(purchase.purchase_date_time,'2030-01-01'::date) ) as rn_purchase 
+	  from
+	  collection_collection as col
+	  left join uplus_enrollment as ue on ue.programme_id = col.programme_id
+	  left join uplus_programme as upp on upp.id = col.programme_id
+	  left join users_userprofile as up on up.user_id = ue.user_id
+	  left join sales.tbl_base_leads_nimbus l on l.learner_unacademy_uid = up.uid
+	  left join auth_user as au on au.id=up.user_id
+	  left join segment.gtm_tap_enroll as tap on tap.test_series_uid = col.uid and tap.learner_uid =up.uid 
+	  left join truth.tbl_daily_learner as tdl on tdl.learner_uid = up.uid and tdl.goal_id = upp.topology_id and tdl.dates = date(ue.enrolled_at+interval '330 min')
+	  left join topology_topology as topo on topo.id = upp.topology_id
+	  left join sandbox_analytics.business_category_leader_goal_mapping bclgm on  bclgm.goal_uid = topo.uid
+	  left join sandbox_analytics.tbl_mau_learner_final as mau on mau.learner_uid = up.uid and mau.business_category_name = bclgm.business_category_name and mau.activity_month = date_trunc('month',ue.enrolled_at+interval '330 min')
+	  left join
+	    (
+	    select
+	      topology_id,
+	      purchase_date_time,
+	      learner_uid,
+	      payment_uid,
+	      net_amount,
+	      individual_subscription_type
+	    from
+	      truth.tbl_revenue_base  
+	    where
+	      individual_subscription_type in (1,5)
+	    ) as purchase
+	  on
+	    purchase.learner_uid = up.uid
+	  and purchase.topology_id = upp.topology_id
+	  and purchase.purchase_date_time > ue.enrolled_at+interval '330 min' 
+	  and purchase.purchase_date_time < date(ue.enrolled_at+interval '330 min')+interval '30 days' 
+	 
+	 -- to track tests given
+	 left join
+	  (
+	  select
+	    learner_quiz_status.user_id as learner_id,
+	    collection.uid as col_uid,
+	    quiz.uid as test_uid,
+	    learner_quiz_status.start_time + interval '330 mins' as test_started_at
+	  from
+	    uplus_programme uplus_prog
+	  left join uplus_programmeextradetails prog_extra on prog_extra.programme_id = uplus_prog.id
+	  left join collection_collection collection on collection.programme_id = uplus_prog.id
+	  left join collection_item c_item on c_item.collection_id = collection.id
+	  left join quizzes_quiz quiz on quiz.id = c_item.object_id
+	  left join quizzes_quizsession learner_quiz_status on learner_quiz_status.quiz_id = quiz.id
+	  left join users_userprofile as up on up.user_id = learner_quiz_status.user_id
+	  where
+	    uplus_prog.state in (10,20,30,40)
+	    and prog_extra.programme_type = 2
+	    and collection.for_plus = 1
+	    and c_item.content_type_id = 176
+	    and quiz.is_active = 1
+	    and quiz.is_deleted = 0
+	    and learner_quiz_status.is_live = 1
+	    and quiz.uid in ('FT64NWY56D','9SYIOMG4VX')
+	    and learner_quiz_status.id is not null
+	    group by 1,2,3,4
+	  ) as test_attempt
+	on
+	  test_attempt.learner_id = up.user_id
+	and test_attempt.col_uid = col.uid
+	 
+	 where col.uid in ('TPYXL3FG')
+--	 group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18
+	 ) base
+ where enrolled_at::date > '2024/02/12'  
+     and  enrolled_at::date <= '2024/02/25'
+     and rn = 1
+ group by 1
+ order by 1
+ ;
