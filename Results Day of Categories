@@ -1,0 +1,42 @@
+-- purchase data
+select 
+learner_id ,
+learner_uid,
+purchase_date ,
+topology_id ,
+topology_name ,
+business_category_name ,
+sub_type ,
+purchase_type ,
+sub_start_date ,
+sub_end_date 
+from truth.tbl_revenue_base trb
+where learner_uid in 
+()
+;
+ 
+-- Engagement Data
+select 
+learner_id,
+learner_uid,
+tdl.goal_id,
+bclgm.business_category_name,
+sum(plus_watchtime_mins) plus_watchtime_mins,
+sum(plus_watchtime_live_mins) plus_watchtime_live_mins,
+sum(special_watchtime_mins) special_watchtime_mins,
+sum(special_watchtime_live_mins) special_watchtime_live_mins,
+sum(batches_enrolled) batches_enrolled,
+sum(plus_test_enrolled) plus_test_enrolled,
+sum(special_test_enrolled) special_test_enrolled,
+sum(lmp_session_attended) lmp_session_attended,
+sum(lmp_session_attended_times) lmp_session_attended_times,
+sum(distinct_videos_watched_overall) distinct_videos_watched_overall,
+sum(dst_sessions) dst_sessions,
+sum(compete_sessions) compete_sessions
+from truth.tbl_daily_learner tdl
+left join sandbox_analytics.business_category_leader_goal_mapping bclgm on bclgm.goal_id = tdl.goal_id 
+where learner_uid 
+in
+()
+group by 1,2,3,4
+;
